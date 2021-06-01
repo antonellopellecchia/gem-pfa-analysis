@@ -23,6 +23,12 @@ class RecHit(Hit):
     @property
     def r(self): return self.event.gemRecHit_g_r[self.index]
 
+    @property
+    def globalX(self): return self.event.gemRecHit_g_x[self.index]
+
+    @property
+    def globalY(self): return self.event.gemRecHit_g_y[self.index]
+
     '''def matches(self, propHit, drphiMax):
         matchesRegion = self.region==propHit.region
         matchesLayer = self.layer==propHit.layer
@@ -86,6 +92,12 @@ class PropHit(Hit):
 
     @property
     def r(self): return self.event.mu_propagatedGlb_r[self.index]
+
+    @property
+    def globalX(self): return self.event.mu_propagatedGlb_x[self.index]
+
+    @property
+    def globalY(self): return self.event.mu_propagatedGlb_y[self.index]
 
     @property
     def isME11(self):
