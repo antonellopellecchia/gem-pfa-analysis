@@ -3,27 +3,35 @@
 import os, sys
 import argparse
 import numpy as np
+import pandas as pd
 
 import ROOT as rt
 rt.gROOT.SetBatch(True)
-
-import pandas as pd
 
 import hit
 
 def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument('--sample')
+    ap.add_argument('--output')
     options = ap.parse_args(sys.argv[1:])
+
+    for d in ['', 'residuals', 'efficiency']:
+        try: os.makedirs('%s/%s'%(options.output, d))
+        except OSError: pass
   
     ietaRange = np.arange(1,9,1)
-    drphiRange = np.arange(0.02,0.22,0.04)
+    drphiRange = np.arange(0.03,0.3,0.03)
     residualHistograms = dict()
+    efficiencyMatchedHistograms = dict()
+    efficiencyTotalHistograms = dict()
     efficiencyHistograms = dict()
     for ieta in ietaRange:
         for drphi in drphiRange:
-            residualHistograms[(ieta,drphi)] = rt.TH1F('residuals%d_%1.2f'%(ieta,drphi), ';#DeltaR#phi (cm);', 40, -0.25, 0.25)
-            efficiencyHistograms[(ieta,drphi)] = rt.TEfficiency('efficiency_%d_%1.2f'%(ieta,drphi), ';p_{t} (GeV);', 30, 0, 100)
+            residualHistograms[(ieta,drphi)] = rt.TH1F('residuals_%d_%1.2f'%(ieta,drphi), ';#DeltaR#phi (cm);', 100, -0.25, 0.25)
+            efficiencyMatchedHistograms[(ieta,drphi)] = rt.TH1F('efficiencyMatched_%d_%1.2f'%(ieta,drphi), ';p_{t} (GeV);Events', 15, 0, 100)
+            efficiencyTotalHistograms[(ieta,drphi)] = rt.TH1F('efficiencyTotal_%d_%1.2f'%(ieta,drphi), ';p_{t} (GeV);Events', 15, 0, 100)
+            efficiencyHistograms[(ieta,drphi)] = rt.TH1F('efficiency_%d_%1.2f'%(ieta,drphi), ';p_{t} (GeV);Efficiency', 15, 0, 100)
 
     rtFiles = os.listdir(options.sample)
     try:
@@ -38,47 +46,100 @@ def main():
                 # match propagated hits with rechits:
                 nRechits = event.gemRecHit_nRecHits
                 nProphits = event.mu_propagated_chamber.size()
+                if nRechits==0 or nProphits==0: continue
                 
-                # chack all rechits and prophits for matches:
-                for iRechit in range(nRechits):
+                '''print 'mu', event.mu_isGEM.size(), event.mu_isME11.size(), event.mu_isStandalone.size(), event.mu_isTight.size(), event.mu_nMuons
+                print 'prop', event.mu_propagated_chamber.size(), event.mu_propagated_isME11.size(), event.mu_propagatedGlb_phi.size()
+                print 'rec', event.gemRecHit_nRecHits, event.gemRecHit_g_phi.size()
+                print 'standalone', event.mu_isStandalone
+                print 'isME11', event.mu_isME11
+                print '''''
+
+                 # check match for all possible drphi cuts:
+                for drphiMax in drphiRange:
+                    # check all rechits and prophits for matches:
                     for iProphit in range(nProphits):
-                        recHit = hit.RecHit(event, iRechit)
                         propHit = hit.PropHit(event, iProphit)
+                        # if not propHit.isGEM: continue # isGEM not implemented yet
+                        if not propHit.checksFiducialCuts: continue
 
-                        for drphiMax in drphiRange: # check match for all possible drphi cuts
+                        matchedRechits = list() # all rechits matching with present prophit
+                        for iRechit in range(nRechits):
+                            recHit = hit.RecHit(event, iRechit)
                             if recHit.matches(propHit, drphiMax=drphiMax):
-                                # if prophit and rechit match for chosen drphi, fill histogram for hit ieta
+                                # fill list of rechits matching with present prophit:
                                 residual = recHit.residual(propHit)
-                                ieta = recHit.ieta
-                                residualHistograms[(ieta,drphiMax)].Fill(residual)
+                                matchedRechits.append((recHit, residual))
+                                # if prophit and rechit match for chosen drphi, fill histogram for hit ieta
+                                # break # stop loop on rechits and continue to another
+                        if len(matchedRechits)>0:
+                            matchedRechit, matchedResidual = min(matchedRechits, key=lambda h:abs(h[1]))
+                            ieta = matchedRechit.ieta
+                            residualHistograms[(ieta,drphiMax)].Fill(matchedResidual)
+                        # after checking matches with all rechits,
+                        # add prophit to efficiency in numerator or denominator:
+                        #print bool(propHit.isME11)
+                        if propHit.isME11: # include in efficiency counts only prophits from ME11
+                            #print (ieta,drphiMax), propHit.pt
+                            if propHit.matchFound:
+                                efficiencyMatchedHistograms[(ieta,drphiMax)].Fill(propHit.pt)
+                            efficiencyTotalHistograms[(ieta,drphiMax)].Fill(propHit.pt)
 
-    except KeyboardInterrupt: print 'Saving output...'
+    except KeyboardInterrupt: print 'Saving output...' # save smaller sample
 
     # save residual and efficiency plots:
-    outFile = rt.TFile('results/zmumu_mc/results.root', 'RECREATE')
+    outFile = rt.TFile('%s/results.root'%(options.output), 'RECREATE')
 
-    # fit all residual plots with two gauss and save canvases per ieta:
-    residualTwoGausFit = rt.TF1('g2', 'gaus(0)+gaus(3)', -0.4, 0.4)
-    residualTwoGausFit.SetParameters(30, 0, 0.05, 20, 0, 0.04)
+    # save and draw all residual and efficiency plots per ieta:
+    '''residualTwoGausFit = rt.TF1('g2', 'gaus(0)+gaus(3)', -0.4, 0.4)
+    residualTwoGausFit.SetParameters(30, 0, 0.05, 20, 0, 0.04)'''
+    rt.gStyle.SetOptStat(0)
     for ieta in ietaRange:
-        residualCanvas = rt.TCanvas('ResidualCanvas', '', 800, 600)
         residualStack = rt.THStack('ResidualStack%d'%(ieta), ';#DeltaR#phi (cm);')
 
-        residualLegend = rt.TLegend(0.12, 0.83, 0.5, 0.73)
+        residualLegend = rt.TLegend(0.12, 0.9, 0.5, 0.75)
         residualLegend.SetHeader('Cut on R#Delta#phi', 'c')
         residualLegend.SetNColumns(2)
 
-        for i,drphi in enumerate(drphiRange):
-            h = residualHistograms[(ieta,drphi)]
-            h.Fit(residualTwoGausFit)
-            h.SetMarkerStyle(20)
-            h.SetMarkerColor(i+2)
-            h.Write()
-            residualStack.Add(h)
-            residualLegend.AddEntry(h, '%1.2f cm'%(drphi), 'f')
-        residualStack.Draw('e1nostack')
+        efficiencyLegend = rt.TLegend(0.12, 0.28, 0.5, 0.13)
+        efficiencyLegend.SetHeader('Cut on R#Delta#phi', 'c')
+        efficiencyLegend.SetNColumns(2)
+
+        for i,drphi in enumerate(reversed(drphiRange)):
+            hResidual = residualHistograms[(ieta,drphi)]
+            '''h.Fit(residualTwoGausFit)'''
+            hResidual.SetMarkerStyle(20)
+            hResidual.SetFillColor(i+2)
+            hResidual.Write()
+            residualStack.Add(hResidual)
+            residualLegend.AddEntry(hResidual, '%1.2f cm'%(drphi), 'f')
+            
+            efficiencyMatchedHistograms[(ieta,drphi)].Write()
+            efficiencyTotalHistograms[(ieta,drphi)].Write()
+            #efficiencyMatchedHistograms[(ieta,drphi)].Divide(efficiencyTotalHistograms[(ieta,drphi)])
+            #hEfficiency = efficiencyMatchedHistograms[(ieta,drphi)]
+            efficiencyMatchedHistograms[(ieta,drphi)].Sumw2()
+            efficiencyTotalHistograms[(ieta,drphi)].Sumw2()
+            efficiencyHistograms[(ieta,drphi)].Divide(efficiencyMatchedHistograms[(ieta,drphi)],efficiencyTotalHistograms[(ieta,drphi)], 1, 1, 'B')
+            hEfficiency = efficiencyHistograms[(ieta,drphi)]
+            hEfficiency.SetMarkerStyle(20)
+            hEfficiency.SetMarkerColor(i+2)
+            hEfficiency.Write()
+            efficiencyLegend.AddEntry(hEfficiency, '%1.2f cm'%(drphi), 'p')
+
+        residualCanvas = rt.TCanvas('ResidualCanvas%d'%(ieta), '', 800, 600)
+        residualCanvas.cd()
+        residualStack.Draw('nostack')
         residualLegend.Draw()
-        residualCanvas.SaveAs('results/zmumu_mc/residuals/residuals_ieta%d.eps'%(ieta))
+        residualCanvas.SaveAs('%s/residuals/residuals_ieta%d.eps'%(options.output, ieta))
+        
+        efficiencyCanvas = rt.TCanvas('EfficiencyCanvas%d'%(ieta), '', 800, 600)
+        efficiencyCanvas.cd()
+        for i,drphi in enumerate(drphiRange):
+            if i==0: efficiencyHistograms[(ieta,drphi)].Draw('e1')
+            else: efficiencyHistograms[(ieta,drphi)].Draw('e1same')
+        efficiencyLegend.Draw()
+        efficiencyCanvas.SaveAs('%s/efficiency/efficiency_ieta%d.eps'%(options.output, ieta))
 
     outFile.Write()
     outFile.Close()
