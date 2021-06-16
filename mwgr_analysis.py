@@ -23,7 +23,8 @@ def main():
   
     ietaRange = np.arange(1,9,1)
     #drphiRange = np.arange(0.03,0.3,0.03)
-    drphiRange = np.arange(1, 6, 1)
+    #drphiRange = np.arange(1, 6, 1)
+    drphiRange = np.arange(0.005, 0.03, 0.005)
     residualHistograms = dict()
     efficiencyMatchedHistograms = dict()
     efficiencyTotalHistograms = dict()
@@ -130,7 +131,7 @@ def main():
             hResidual.SetFillColor(i+2)
             hResidual.Write()
             residualStack.Add(hResidual)
-            residualLegend.AddEntry(hResidual, '%1.2f cm'%(drphi), 'f')
+            residualLegend.AddEntry(hResidual, '%1.3f cm'%(drphi), 'f')
             
             efficiencyMatchedHistograms[(ieta,drphi)].Write()
             efficiencyTotalHistograms[(ieta,drphi)].Write()

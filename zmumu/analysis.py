@@ -14,6 +14,7 @@ def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument('--sample')
     ap.add_argument('--output')
+    ap.add_argument('--nevents', type=int)
     options = ap.parse_args(sys.argv[1:])
 
     for d in ['', 'residuals', 'efficiency']:
@@ -21,17 +22,21 @@ def main():
         except OSError: pass
   
     ietaRange = np.arange(1,9,1)
-    drphiRange = np.arange(0.03,0.3,0.03)
+    drphi = 0.15
+    fiducialCutPhiRange = np.arange(5e-3, 100e-3, 5e-3) # mrad from chamber borders
+    #fiducialCutRRange = np.arange(0.1, 0.10, 0.1) # mm from eta partition borders
+    fiducialCutR = 0.5
     residualHistograms = dict()
     efficiencyMatchedHistograms = dict()
     efficiencyTotalHistograms = dict()
     efficiencyHistograms = dict()
     for ieta in ietaRange:
-        for drphi in drphiRange:
-            residualHistograms[(ieta,drphi)] = rt.TH1F('residuals_%d_%1.2f'%(ieta,drphi), ';#DeltaR#phi (cm);', 100, -0.25, 0.25)
-            efficiencyMatchedHistograms[(ieta,drphi)] = rt.TH1F('efficiencyMatched_%d_%1.2f'%(ieta,drphi), ';p_{t} (GeV);Events', 15, 0, 100)
-            efficiencyTotalHistograms[(ieta,drphi)] = rt.TH1F('efficiencyTotal_%d_%1.2f'%(ieta,drphi), ';p_{t} (GeV);Events', 15, 0, 100)
-            efficiencyHistograms[(ieta,drphi)] = rt.TH1F('efficiency_%d_%1.2f'%(ieta,drphi), ';p_{t} (GeV);Efficiency', 15, 0, 100)
+        for fiducialCutPhi in fiducialCutPhiRange:
+            key = 'eta%d_fiducialPhi%1.2e'%(ieta, fiducialCutPhi)
+            residualHistograms[key] = rt.TH1F('residuals_%s'%(key), ';#DeltaR#phi (cm);', 100, -0.25, 0.25)
+            efficiencyMatchedHistograms[key] = rt.TH1F('ptMatched_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
+            efficiencyTotalHistograms[key] = rt.TH1F('ptPropagated_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
+            efficiencyHistograms[key] = rt.TH1F('ptEfficiency_%s'%(key), ';p_{t} (GeV);Efficiency', 15, 0, 100)
 
     rtFiles = os.listdir(options.sample)
     try:
@@ -55,47 +60,53 @@ def main():
                 print 'isME11', event.mu_isME11
                 print '''''
 
-                 # check match for all possible drphi cuts:
-                for drphiMax in drphiRange:
-                    # check all rechits and prophits for matches:
-                    for iProphit in range(nProphits):
-                        propHit = hit.PropHit(event, iProphit)
-                        # if not propHit.isGEM: continue # isGEM not implemented yet
-                        if not propHit.checksFiducialCuts: continue
+                # check all rechits and prophits for matches:
+                for iProphit in range(nProphits):
+                    propHit = hit.PropHit(event, iProphit)
+                    # if not propHit.isGEM: continue # isGEM not implemented yet
+                    ieta = propHit.ieta
+                    for fiducialCutPhi in fiducialCutPhiRange:
+                        key = 'eta%d_fiducialPhi%1.2e'%(ieta, fiducialCutPhi)
+                        if not propHit.checksFiducialCuts(fiducialCutR, fiducialCutPhi): continue
 
-                        matchedRechits = list() # all rechits matching with present prophit
                         for iRechit in range(nRechits):
                             recHit = hit.RecHit(event, iRechit)
-                            if recHit.matches(propHit, drphiMax=drphiMax):
-                                # fill list of rechits matching with present prophit:
+                            if recHit.matches(propHit, drphiMax=drphi):
                                 residual = recHit.residual(propHit)
-                                matchedRechits.append((recHit, residual))
-                                # if prophit and rechit match for chosen drphi, fill histogram for hit ieta
-                                # break # stop loop on rechits and continue to another
-                        if len(matchedRechits)>0:
-                            matchedRechit, matchedResidual = min(matchedRechits, key=lambda h:abs(h[1]))
-                            ieta = matchedRechit.ieta
-                            residualHistograms[(ieta,drphiMax)].Fill(matchedResidual)
-                        # after checking matches with all rechits,
-                        # add prophit to efficiency in numerator or denominator:
-                        #print bool(propHit.isME11)
+                                residualHistograms[key].Fill(residual)
+                                # fill list of rechits matching with present prophit:
+                                #residual = recHit.residual(propHit)
+                                #matchedRechits.append((recHit, residual))
+                                
                         if propHit.isME11: # include in efficiency counts only prophits from ME11
-                            #print (ieta,drphiMax), propHit.pt
                             if propHit.matchFound:
-                                efficiencyMatchedHistograms[(ieta,drphiMax)].Fill(propHit.pt)
-                            efficiencyTotalHistograms[(ieta,drphiMax)].Fill(propHit.pt)
+                                efficiencyMatchedHistograms[key].Fill(propHit.pt)
+                            efficiencyTotalHistograms[key].Fill(propHit.pt)
 
     except KeyboardInterrupt: print 'Saving output...' # save smaller sample
 
     # save residual and efficiency plots:
     outFile = rt.TFile('%s/results.root'%(options.output), 'RECREATE')
+    outFile.mkdir('residuals')
+    outFile.mkdir('efficiency')
+    outFile.mkdir('efficiency/matched')
+    outFile.mkdir('efficiency/total')
 
     # save and draw all residual and efficiency plots per ieta:
     '''residualTwoGausFit = rt.TF1('g2', 'gaus(0)+gaus(3)', -0.4, 0.4)
     residualTwoGausFit.SetParameters(30, 0, 0.05, 20, 0, 0.04)'''
     rt.gStyle.SetOptStat(0)
     for ieta in ietaRange:
-        residualStack = rt.THStack('ResidualStack%d'%(ieta), ';#DeltaR#phi (cm);')
+        for fiducialCutPhi in fiducialCutPhiRange:
+            key = 'eta%d_fiducialPhi%1.2e'%(ieta, fiducialCutPhi)
+            outFile.cd('residuals')
+            residualHistograms[key].Write()
+            outFile.cd('efficiency/matched')
+            efficiencyMatchedHistograms[key].Write()
+            outFile.cd('efficiency/total')
+            efficiencyTotalHistograms[key].Write()
+
+        '''residualStack = rt.THStack('ResidualStack%d'%(ieta), ';#DeltaR#phi (cm);')
 
         residualLegend = rt.TLegend(0.12, 0.9, 0.5, 0.75)
         residualLegend.SetHeader('Cut on R#Delta#phi', 'c')
@@ -107,7 +118,7 @@ def main():
 
         for i,drphi in enumerate(reversed(drphiRange)):
             hResidual = residualHistograms[(ieta,drphi)]
-            '''h.Fit(residualTwoGausFit)'''
+            h.Fit(residualTwoGausFit)
             hResidual.SetMarkerStyle(20)
             hResidual.SetFillColor(i+2)
             hResidual.Write()
@@ -139,7 +150,7 @@ def main():
             if i==0: efficiencyHistograms[(ieta,drphi)].Draw('e1')
             else: efficiencyHistograms[(ieta,drphi)].Draw('e1same')
         efficiencyLegend.Draw()
-        efficiencyCanvas.SaveAs('%s/efficiency/efficiency_ieta%d.eps'%(options.output, ieta))
+        efficiencyCanvas.SaveAs('%s/efficiency/efficiency_ieta%d.eps'%(options.output, ieta))'''
 
     outFile.Write()
     outFile.Close()

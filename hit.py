@@ -46,13 +46,16 @@ class RecHit(Hit):
         if not self.chamber==propHit.chamber: return False
         if not self.ieta==propHit.ieta: return False
         # alternatively to allow neighbour eta partitions: if not abs(self.ieta-propHit.ieta) < 2: return False
-        if not abs(self.residual(propHit))<=drphiMax: return False
+        if not abs(self.residualPhi(propHit))<=drphiMax: return False
         # if you arrive here then everything matches:
         propHit.matchFound = True
         return True
     
     def residual(self, propHit):
         return (self.phi-propHit.phi)*propHit.r
+    
+    def residualPhi(self, propHit):
+        return self.phi-propHit.phi
 
 class PropHit(Hit):
     def __init__(self, event, index):
@@ -64,10 +67,6 @@ class PropHit(Hit):
 
     @matchFound.setter
     def matchFound(self, m): self._matchFound = m
-
-    @property
-    def checksFiducialCuts(self):
-        return True # to be implemented
 
     @property
     def isGEM(self): return self.event.m_propagated_isGEM[self.index]
@@ -102,3 +101,36 @@ class PropHit(Hit):
     @property
     def isME11(self):
         return self.event.mu_propagated_isME11[self.index]
+
+    @property
+    def etaPartitionCenterX(self):
+        return self.event.mu_propagated_EtaPartition_centerX[self.index]
+
+    @property
+    def etaPartitionCenterY(self):
+        return self.event.mu_propagated_EtaPartition_centerY[self.index]
+
+    @property
+    def etaPartitionRMax(self):
+        return self.event.mu_propagated_EtaPartition_rMax[self.index]
+
+    @property
+    def etaPartitionRMin(self):
+        return self.event.mu_propagated_EtaPartition_rMin[self.index]
+
+    @property
+    def etaPartitionPhiMax(self):
+        return self.event.mu_propagated_EtaPartition_phiMax[self.index]
+
+    @property
+    def etaPartitionPhiMin(self):
+        return self.event.mu_propagated_EtaPartition_phiMin[self.index]
+        
+    def checksFiducialCuts(self, fiducialCutR, fiducialCutPhi):
+        #print self.r, self.etaPartitionRMax, fiducialCutR
+        #print self.phi, self.etaPartitionPhiMax, fiducialCutPhi
+        cutR = abs(self.etaPartitionRMax-self.r)>fiducialCutR and \
+            abs(self.etaPartitionRMin-self.r)>fiducialCutR
+        cutPhi = abs(self.etaPartitionPhiMax-self.phi)>fiducialCutPhi and \
+            abs(self.etaPartitionPhiMin-self.phi)>fiducialCutPhi
+        return cutR and cutPhi
