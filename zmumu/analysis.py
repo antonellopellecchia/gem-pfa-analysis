@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 
 import os, sys
 import argparse
@@ -8,45 +8,61 @@ import pandas as pd
 import ROOT as rt
 rt.gROOT.SetBatch(True)
 
+import os, sys
+currentdir = os.path.dirname(os.path.realpath(__file__))
+parentdir = os.path.dirname(currentdir)
+sys.path.append(parentdir)
 import hit
 
 def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument('--sample')
     ap.add_argument('--output')
+    ap.add_argument('--borderR', nargs='+', type=float)
+    ap.add_argument('--borderPhi', nargs='+', type=float)
     ap.add_argument('--nevents', type=int)
     options = ap.parse_args(sys.argv[1:])
 
-    for d in ['', 'residuals', 'efficiency']:
+    for d in ['']:
         try: os.makedirs('%s/%s'%(options.output, d))
         except OSError: pass
   
     ietaRange = np.arange(1,9,1)
-    drphi = 0.15
-    fiducialCutPhiRange = np.arange(5e-3, 100e-3, 5e-3) # mrad from chamber borders
-    #fiducialCutRRange = np.arange(0.1, 0.10, 0.1) # mm from eta partition borders
-    fiducialCutR = 0.5
+    drphi = 1 # matching drphi
+
+    if options.borderR:
+        rmin, rmax, rstep = options.borderR
+        fiducialCutRRange = np.arange(rmin, rmax, rstep) # cm from eta partition borders
+    else: fiducialCutRRange = np.arange(0.0, 1.1, 0.1) # cm from eta partition borders
+    if options.borderPhi:
+        phimin, phimax, phistep = options.borderPhi
+        fiducialCutPhiRange = np.arange(phimin, phimax, phistep) # rad from chamber borders
+    else: fiducialCutPhiRange = np.arange(0e-3, 10e-3, 1e-3) # rad from chamber borders
+    #fiducialCutPhi = 10e-3
+    #fiducialCutR = 0.5
+    
     residualHistograms = dict()
     efficiencyMatchedHistograms = dict()
     efficiencyTotalHistograms = dict()
     efficiencyHistograms = dict()
     for ieta in ietaRange:
-        for fiducialCutPhi in fiducialCutPhiRange:
-            key = 'eta%d_fiducialPhi%1.2e'%(ieta, fiducialCutPhi)
-            residualHistograms[key] = rt.TH1F('residuals_%s'%(key), ';#DeltaR#phi (cm);', 100, -0.25, 0.25)
-            efficiencyMatchedHistograms[key] = rt.TH1F('ptMatched_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
-            efficiencyTotalHistograms[key] = rt.TH1F('ptPropagated_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
-            efficiencyHistograms[key] = rt.TH1F('ptEfficiency_%s'%(key), ';p_{t} (GeV);Efficiency', 15, 0, 100)
+        for fiducialCutR in fiducialCutRRange:
+            for fiducialCutPhi in fiducialCutPhiRange:
+                key = 'eta%d_fiducialR%1.2e_fiducialPhi%1.2e'%(ieta, fiducialCutR, fiducialCutPhi)
+                residualHistograms[key] = rt.TH1F('residuals_%s'%(key), ';#DeltaR#phi (cm);', 100, -0.25, 0.25)
+                efficiencyMatchedHistograms[key] = rt.TH1F('ptMatched_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
+                efficiencyTotalHistograms[key] = rt.TH1F('ptPropagated_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
+                efficiencyHistograms[key] = rt.TH1F('ptEfficiency_%s'%(key), ';p_{t} (GeV);Efficiency', 15, 0, 100)
 
     rtFiles = os.listdir(options.sample)
     try:
         for f in rtFiles:
-            print 'Processing file%s...'%(f)
+            print('Processing file%s...'%(f))
             rtSample = rt.TFile(options.sample+'/'+f)
             sampleTree = rtSample.Get('muNtupleProducer').Get('MuDPGTree')
             sampleTree = rtSample.Get('muNtupleProducer/MuDPGTree')
             for evtId,event in enumerate(sampleTree):
-                if (evtId%10000==0): print 'Processed %d/%d events...'%(evtId,sampleTree.GetEntries())
+                if (evtId%10000==0): print('Processed %d/%d events...'%(evtId,sampleTree.GetEntries()))
             
                 # match propagated hits with rechits:
                 nRechits = event.gemRecHit_nRecHits
@@ -65,25 +81,27 @@ def main():
                     propHit = hit.PropHit(event, iProphit)
                     # if not propHit.isGEM: continue # isGEM not implemented yet
                     ieta = propHit.ieta
-                    for fiducialCutPhi in fiducialCutPhiRange:
-                        key = 'eta%d_fiducialPhi%1.2e'%(ieta, fiducialCutPhi)
-                        if not propHit.checksFiducialCuts(fiducialCutR, fiducialCutPhi): continue
+                    for fiducialCutR in fiducialCutRRange:
+                        for fiducialCutPhi in fiducialCutPhiRange:
+                            key = 'eta%d_fiducialR%1.2e_fiducialPhi%1.2e'%(ieta, fiducialCutR, fiducialCutPhi)
+                            if not propHit.checksFiducialCuts(fiducialCutR, fiducialCutPhi): continue
 
-                        for iRechit in range(nRechits):
-                            recHit = hit.RecHit(event, iRechit)
-                            if recHit.matches(propHit, drphiMax=drphi):
-                                residual = recHit.residual(propHit)
-                                residualHistograms[key].Fill(residual)
-                                # fill list of rechits matching with present prophit:
-                                #residual = recHit.residual(propHit)
-                                #matchedRechits.append((recHit, residual))
-                                
-                        if propHit.isME11: # include in efficiency counts only prophits from ME11
-                            if propHit.matchFound:
-                                efficiencyMatchedHistograms[key].Fill(propHit.pt)
-                            efficiencyTotalHistograms[key].Fill(propHit.pt)
+                            for iRechit in range(nRechits):
+                                recHit = hit.RecHit(event, iRechit)
+                                if recHit.matches(propHit, drphiMax=drphi):
+                                    #print('matches')
+                                    residual = recHit.residual(propHit)
+                                    residualHistograms[key].Fill(residual)
+                                    # fill list of rechits matching with present prophit:
+                                    #residual = recHit.residual(propHit)
+                                    #matchedRechits.append((recHit, residual))
+                                    
+                            if propHit.isME11: # include in efficiency counts only prophits from ME11
+                                if propHit.matchFound:
+                                    efficiencyMatchedHistograms[key].Fill(propHit.pt)
+                                efficiencyTotalHistograms[key].Fill(propHit.pt)
 
-    except KeyboardInterrupt: print 'Saving output...' # save smaller sample
+    except KeyboardInterrupt: print('Saving output...') # save smaller sample
 
     # save residual and efficiency plots:
     outFile = rt.TFile('%s/results.root'%(options.output), 'RECREATE')
@@ -97,14 +115,17 @@ def main():
     residualTwoGausFit.SetParameters(30, 0, 0.05, 20, 0, 0.04)'''
     rt.gStyle.SetOptStat(0)
     for ieta in ietaRange:
-        for fiducialCutPhi in fiducialCutPhiRange:
-            key = 'eta%d_fiducialPhi%1.2e'%(ieta, fiducialCutPhi)
-            outFile.cd('residuals')
-            residualHistograms[key].Write()
-            outFile.cd('efficiency/matched')
-            efficiencyMatchedHistograms[key].Write()
-            outFile.cd('efficiency/total')
-            efficiencyTotalHistograms[key].Write()
+        for fiducialCutR in fiducialCutRRange:
+            for fiducialCutPhi in fiducialCutPhiRange:
+                key = 'eta%d_fiducialR%1.2e_fiducialPhi%1.2e'%(ieta, fiducialCutR, fiducialCutPhi)
+                outFile.cd('residuals')
+                residualHistograms[key].Write()
+                outFile.cd('efficiency/matched')
+                efficiencyMatchedHistograms[key].Sumw2()
+                efficiencyMatchedHistograms[key].Write()
+                outFile.cd('efficiency/total')
+                efficiencyTotalHistograms[key].Sumw2()
+                efficiencyTotalHistograms[key].Write()
 
         '''residualStack = rt.THStack('ResidualStack%d'%(ieta), ';#DeltaR#phi (cm);')
 
