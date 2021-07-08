@@ -46,7 +46,7 @@ class RecHit(Hit):
         if not self.chamber==propHit.chamber: return False
         if not self.ieta==propHit.ieta: return False
         # alternatively to allow neighbour eta partitions: if not abs(self.ieta-propHit.ieta) < 2: return False
-        if not abs(self.residualPhi(propHit))<=drphiMax: return False
+        if not abs(self.residual(propHit))<=drphiMax: return False
         # if you arrive here then everything matches:
         propHit.matchFound = True
         return True
