@@ -20,7 +20,83 @@ ietaRange = np.arange(1,9,1)
 regionRange = [-1, 1]
 layerRange = [1, 2]
 
-def processRootFile(processNumber, rootFileIn, rootFileOut, runParameters):
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument('--sample')
+    ap.add_argument('--output')
+    ap.add_argument('--processes', type=int)
+    ap.add_argument('--drphi', type=float)
+    #ap.add_argument('--borderR', nargs='+', type=float)
+    #ap.add_argument('--borderPhi', nargs='+', type=float)
+    ap.add_argument('--nevents', type=int)
+    options = ap.parse_args(sys.argv[1:])
+
+    for d in ['', 'tmp']:
+        try: os.makedirs(f'{options.output}/{d}')
+        except OSError: pass
+  
+    # analysis workflow parameters:
+    if options.drphi: drphi = options.drphi # matching drphi in cm
+    else: drphi = 4 # default 4 cm
+    fiducialCutR = 1 # cm
+    fiducialCutPhi = 5e-3 # mrad
+
+    runParameters = (drphi, fiducialCutR, fiducialCutPhi)
+
+    rtFiles = os.listdir(options.sample)
+    rtFiles = [ f for f in rtFiles if f[-5:]=='.root' ]
+    tempOutPaths = list()
+    processes = list()
+    
+    for nfile,f in enumerate(rtFiles):
+        ''' if number of processes is specified, divide each file 
+            into nblocks = nprocesses/nfiles and launch nblocks processes per file
+            otherwise launch one process per file '''
+        if options.processes: nblocks = int(options.processes/len(rtFiles))
+        else: nblocks = 1
+
+        # start a process related to the present file
+        print(f'Starting {nblocks} processes for file for file {f}...')
+        
+        inPath = f'{options.sample}/{f}'
+        rtSample = rt.TFile(inPath)
+        sampleTree = rtSample.Get('muNtupleProducer/MuDPGTree')
+        entries = sampleTree.GetEntries()
+        rtSample.Close()
+
+        entriesPerBlock = int(entries/nblocks)
+        firstEntry = 0
+        for nblock in range(nblocks):
+            lastEntry = min(firstEntry+entriesPerBlock, entries)
+            tempOutPath = f'{options.output}/tmp/{f}'.replace('.root', f'_{nblock}.root')        
+            process = multiprocessing.Process(target=processRootFile, args=(nfile, inPath, tempOutPath, firstEntry, lastEntry, runParameters))
+            tempOutPaths.append(tempOutPath)
+            processes.append(process)
+            process.start()
+            firstEntry = lastEntry
+
+    try:
+        for process in processes: process.join()
+    except KeyboardInterrupt: print('All processes stopped.')
+
+    ''' after all the processes have finished,
+        merge all the temporary output files '''
+    mergeRootFiles(tempOutPaths, f'{options.output}/results.root')
+
+    '''residualHistograms = dict()
+    efficiencyMatchedHistograms = dict()
+    efficiencyPropagatedHistograms = dict()
+    efficiencyHistograms = dict()
+    recHitHistograms = dict()
+    for ieta in ietaRange:
+        for 
+                key = 'eta%d_fiducialR%1.2e_fiducialPhi%1.2e'%(ieta, fiducialCutR, fiducialCutPhi)
+                residualHistograms[key] = rt.TH1F('residuals_%s'%(key), ';#DeltaR#phi (cm);', 100, -0.25, 0.25)
+                efficiencyMatchedHistograms[key] = rt.TH1F('ptMatched_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
+                efficiencyTotalHistograms[key] = rt.TH1F('ptPropagated_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
+                efficiencyHistograms[key] = rt.TH1F('ptEfficiency_%s'%(key), ';p_{t} (GeV);Efficiency', 15, 0, 100)'''
+
+def processRootFile(processNumber, rootFileIn, rootFileOut, firstEntry, lastEntry, runParameters):
     # unpack analysis parameters:
     drphi, fiducialCutR, fiducialCutPhi = runParameters
 
@@ -41,8 +117,12 @@ def processRootFile(processNumber, rootFileIn, rootFileOut, runParameters):
     sampleTree = rtSample.Get('muNtupleProducer/MuDPGTree')
     entries = sampleTree.GetEntries()
     try:
-        for evtId,event in enumerate(sampleTree):
-            if (evtId%10000==0): print(f'Process {processNumber} ran on {evtId}/{entries} events...')
+        #for evtId,event in enumerate(sampleTree):
+        for evtId in range(firstEntry, lastEntry):
+            event = sampleTree
+            event.GetEntry(evtId)
+            if (evtId%10000==0):
+                print(f'File {os.path.basename(rootFileIn)}, process {processNumber}, event {evtId}/{entries}...')
         
             # match propagated hits with rechits:
             nRechits = event.gemRecHit_nRecHits
@@ -204,65 +284,5 @@ def mergeRootFiles(inputFilePaths, outputFilePath):
             prophitMaps[key].Write()
             outFile.cd('rechits/matched')
             matchedRechitMaps[key].Write()
-
-
-def main():
-    ap = argparse.ArgumentParser(add_help=True)
-    ap.add_argument('--sample')
-    ap.add_argument('--output')
-    ap.add_argument('--drphi', type=float)
-    #ap.add_argument('--borderR', nargs='+', type=float)
-    #ap.add_argument('--borderPhi', nargs='+', type=float)
-    ap.add_argument('--nevents', type=int)
-    options = ap.parse_args(sys.argv[1:])
-
-    for d in ['', 'tmp']:
-        try: os.makedirs(f'{options.output}/{d}')
-        except OSError: pass
-  
-    # analysis workflow parameters:
-    if options.drphi: drphi = options.drphi # matching drphi in cm
-    else: drphi = 4 # default 4 cm
-    fiducialCutR = 1 # cm
-    fiducialCutPhi = 5e-3 # mrad
-
-    runParameters = (drphi, fiducialCutR, fiducialCutPhi)
-
-    rtFiles = os.listdir(options.sample)
-    rtFiles = [ f for f in rtFiles if f[-5:]=='.root' ]
-    tempOutPaths = list()
-    processes = list()
-    for nfile, f in enumerate(rtFiles):
-        # start a process related to the present file
-        print(f'Starting process {nfile} for file {f}...')
-        inPath = f'{options.sample}/{f}'
-        tempOutPath = f'{options.output}/tmp/{f}'
-        process = multiprocessing.Process(target=processRootFile, args=(nfile, inPath, tempOutPath, runParameters))
-        tempOutPaths.append(tempOutPath)
-        processes.append(process)
-        process.start()
-
-    try:
-        for process in processes: process.join()
-    except KeyboardInterrupt:
-        print('All processes stopped.')
-    time.sleep(1)
-
-    ''' after all the processes have finished,
-        merge all the temporary output files '''
-    mergeRootFiles(tempOutPaths, f'{options.output}/results.root')
-
-    '''residualHistograms = dict()
-    efficiencyMatchedHistograms = dict()
-    efficiencyPropagatedHistograms = dict()
-    efficiencyHistograms = dict()
-    recHitHistograms = dict()
-    for ieta in ietaRange:
-        for 
-                key = 'eta%d_fiducialR%1.2e_fiducialPhi%1.2e'%(ieta, fiducialCutR, fiducialCutPhi)
-                residualHistograms[key] = rt.TH1F('residuals_%s'%(key), ';#DeltaR#phi (cm);', 100, -0.25, 0.25)
-                efficiencyMatchedHistograms[key] = rt.TH1F('ptMatched_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
-                efficiencyTotalHistograms[key] = rt.TH1F('ptPropagated_%s'%(key), ';p_{t} (GeV);Events', 15, 0, 100)
-                efficiencyHistograms[key] = rt.TH1F('ptEfficiency_%s'%(key), ';p_{t} (GeV);Efficiency', 15, 0, 100)'''
     
 if __name__=='__main__': main()
